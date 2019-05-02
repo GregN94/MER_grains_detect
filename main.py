@@ -1,6 +1,6 @@
+import os
 import cv2
 import numpy as np
-from matplotlib import pyplot as plt
 
 
 def FILL(input_image):
@@ -22,45 +22,52 @@ def FILL(input_image):
     return output_image
 
 
-
-
 FILE_NAME = '1m129070954eff0224p2933m2f1.png'
+DIR = "Results"
+
+
+def get_file_name(prefix):
+    return DIR + "\\" + prefix + "_" + FILE_NAME
+
+
+if not os.path.exists(DIR):
+    os.mkdir(DIR)
+
 
 # OPEN AND NORMALIZE
-img = cv2.imread(FILE_NAME, 0)
-# norm = cv2.normalize(img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_16S)
+image = cv2.imread(FILE_NAME, 0)
+normalized_image = (cv2.normalize(image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)) * 255
+cv2.imwrite(get_file_name("1norm"), normalized_image)
 
+normalized_image = cv2.imread(get_file_name("1norm"), 0)
 
 # FILTERING
 RADIUS = 10
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (RADIUS, RADIUS))
-opening = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel)
-
+opening = cv2.morphologyEx(normalized_image, cv2.MORPH_OPEN, kernel)
+cv2.imwrite(get_file_name("2opening"), opening)
 
 # SEGMENTATION
-# grayscaled = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-ret3,th3 = cv2.threshold(opening, 120, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+ret3, thresh_image = cv2.threshold(opening, 120, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+cv2.imwrite(get_file_name("3threshold"), thresh_image)
 
-filled_image = FILL(th3)
-cv2.imwrite("filled_"+FILE_NAME, filled_image)
+filled_image = FILL(thresh_image)
+cv2.imwrite(get_file_name("4filled"), filled_image)
 
 
 # EXTRACTION
 contours, bin = cv2.findContours(filled_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
 
-normalized_image = cv2.normalize(img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-
-
 
 display_image = cv2.cvtColor(normalized_image.copy(), cv2.COLOR_GRAY2BGR)
 
-color = 120
-cv2.drawContours(display_image, contours, -1, (0, color, 0), 6, cv2.LINE_4)
 
-cv2.imshow("Foreground", display_image)
+GREEN = 200
+cv2.drawContours(display_image, contours, -1, (0, GREEN, 0), 6, cv2.LINE_4)
 
-display_image = display_image * 255
-cv2.imwrite("result_"+FILE_NAME, display_image)
+cv2.imshow("Result", display_image)
+
+cv2.imwrite(get_file_name("5result"), display_image)
 cv2.waitKey(0)
 
 cv2.waitKey(0)
