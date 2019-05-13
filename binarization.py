@@ -1,3 +1,4 @@
+import math
 import os
 import cv2
 import numpy as np
@@ -11,7 +12,7 @@ DIR = "Binarization"
 
 
 def GetAllImages():
-    return [dir for dir in os.listdir(".") if dir.endswith(".png")]
+    return [dir for dir in os.listdir(".") if dir.endswith(".JPG")]
 
 
 def GetFileName(prefix, image_name):
@@ -42,12 +43,12 @@ def IsBorderContour(contour, imageSize):
     return False
 
 
-def FilterBorderContours(contours, imageSize):
-    filtered_contoures = []
+def GetBorderContours(contours, imageSize):
+    border_contours = []
     for contour in contours:
-        if not IsBorderContour(contour, imageSize):
-            filtered_contoures.append(contour)
-    return filtered_contoures
+        if IsBorderContour(contour, imageSize):
+            border_contours.append(contour)
+    return border_contours
 
 
 def Fill(input_image):
@@ -59,13 +60,67 @@ def Fill(input_image):
     mask = np.zeros((height + 2, width + 2), np.uint8)
 
     # Floodfill from point (0, 0)
-    cv2.floodFill(image_floodfill, mask, (0, 0), 255)
+    cv2.floodFill(image_floodfill, mask, (0, 150), 255)
     # Invert floodfilled image
     image_floodfill_inv = cv2.bitwise_not(image_floodfill)
 
     # Combine the two images to get the foreground.
     output_image = input_image | image_floodfill_inv
     return output_image
+
+
+def DeleteContours(contours_to_delete, image):
+    clean_image = image.copy()
+
+    cv2.drawContours(clean_image, contours_to_delete, -1, (0,0,0), 3)
+    cv2.drawContours(clean_image, contours_to_delete, -1, (0,0,0), cv2.FILLED)
+
+    return clean_image
+
+
+def DeleteSmallContours(image, size):
+
+    clean_image = image.copy()
+    contours, bin = cv2.findContours(clean_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+
+    cont_to_delete = []
+    for cont in contours:
+        if cv2.contourArea(cont) < size:
+            cont_to_delete.append(cont)
+
+    return DeleteContours(cont_to_delete, clean_image)
+
+
+def CalculateDistance(x, y):
+    return math.sqrt(pow(x, 2) + pow(y, 2))
+
+
+def CircleKernel(radius):
+
+    diameter = 2 * radius + 1
+
+    kernel = np.zeros((diameter, diameter), dtype=np.uint8)
+
+    middle = int((diameter - 1) / 2)
+    kernel[middle, ] = 1
+    kernel[:, middle] = 1
+
+    width, height = kernel.shape
+    for x in range(width):
+        for y in range(height):
+            distance = round(CalculateDistance(abs(middle - x), abs(middle - y)))
+            if distance <= radius:
+                kernel[x, y] = 1
+    return kernel
+
+
+def DeleteBorderContours(image):
+    clean_image = image.copy()
+    contours, bin = cv2.findContours(clean_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+
+    contours_to_delete = GetBorderContours(contours, clean_image.shape)
+
+    return DeleteContours(contours_to_delete, clean_image)
 
 
 # READ ALL IMAGES
@@ -79,39 +134,45 @@ CreateResultDirectory(png_images)
 for file_name in png_images:
     # OPEN AND NORMALIZE
     image = cv2.imread(file_name, 0)
-    normalized_image = (cv2.normalize(image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)) * 255
-    cv2.imwrite(GetFileName("1norm", file_name), normalized_image)
+    # normalized_image = (cv2.normalize(image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)) * 255
+    # cv2.imwrite(GetFileName("1norm", file_name), normalized_image)
 
-    normalized_image = cv2.imread(GetFileName("1norm", file_name), 0)
+    # normalized_image = cv2.imread(GetFileName("1norm", file_name), 0)
 
     # FILTERING
-    RADIUS = 12
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (RADIUS, RADIUS))
-    opening = cv2.morphologyEx(normalized_image, cv2.MORPH_OPEN, kernel)
+
+    opening = cv2.morphologyEx(image, cv2.MORPH_OPEN, CircleKernel(8))
     cv2.imwrite(GetFileName("2opening", file_name), opening)
 
     # SEGMENTATION
-    ret3, thresh_image = cv2.threshold(opening, 120, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # ret3, thresh_image = cv2.threshold(opening, 0.39 * 255, 255, cv2.THRESH_BINARY)
+    ret3, thresh_image = cv2.threshold(opening, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     cv2.imwrite(GetFileName("3threshold", file_name), thresh_image)
 
     # FILL
     filled_image = Fill(thresh_image)
-    cv2.imwrite(GetFileName("4filled", file_name), filled_image)
+
+    image_with_no_border = DeleteBorderContours(filled_image)
+    cv2.imwrite(GetFileName("4filled", file_name), image_with_no_border)
+
+    image_with_no_border = DeleteSmallContours(image_with_no_border, 300)
+    cv2.imwrite(GetFileName("5deleted", file_name), image_with_no_border)
 
     # EXTRACTION
-    contours, bin = cv2.findContours(filled_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+    contours, bin = cv2.findContours(image_with_no_border, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
 
     # CREATE PICTURE FOR DISPLAYING
-    display_image = cv2.cvtColor(normalized_image.copy(), cv2.COLOR_GRAY2BGR)
+    display_image = cv2.cvtColor(image.copy(), cv2.COLOR_GRAY2BGR)
 
     # DRAWING CONTOURS
     LINE_THICKNESS = 2
-    cv2.drawContours(display_image, FilterBorderContours(contours, filled_image.shape), -1, YELLOW, LINE_THICKNESS)
+    cv2.drawContours(display_image, contours, -1, YELLOW, LINE_THICKNESS)
 
-    cv2.imshow("Result", display_image)
+    # cv2.imshow("Result", display_image)
 
-    cv2.imwrite(GetFileName("5result", file_name), display_image)
+    cv2.imwrite(GetFileName("6result", file_name), display_image)
     cv2.waitKey(0)
+
 
 
 cv2.destroyAllWindows()
